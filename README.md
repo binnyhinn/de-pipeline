@@ -1,143 +1,176 @@
-Crypto ETL Pipeline
-An automated, containerised data pipeline that ingests cryptocurrency market data from the CoinGecko API every hour, validates and cleans it, and loads it into a PostgreSQL data warehouse. Orchestrated with Apache Airflow.
-Author: R. Binny Hinn 
+# 📈 Crypto ETL Pipeline
 
-1. Overview
-Market data changes constantly, and raw API responses are not safe to analyse directly: fields can be missing, values can be invalid, and re-runs can create duplicates. This project solves that with a layered pipeline:
-the raw layer keeps the exact API response for traceability and reprocessing
-the clean layer holds validated, analysis-ready rows
-The whole stack starts with one command (docker compose up -d) and runs unattended on an hourly schedule.
-2. Architecture
-                         ┌──────────────────────────────┐
-                         │      Apache Airflow DAG      │
-                         │        (@hourly, 3 retries)  │
-                         └──────────────────────────────┘
-                                       │
-  CoinGecko API ──► extract ──┬──► save_raw ───────────► PostgreSQL  raw.crypto_prices
-                              │
-                              └──► transform ──► save_clean ──► PostgreSQL  clean.crypto_prices
+### ⚙️ Automated Data Ingestion, Validation, and Warehousing with Apache Airflow
 
-Component	Purpose
-extract	Calls the CoinGecko /coins/markets endpoint for 8 coins
-save_raw	Stores the untouched response as JSONB
-transform	Validates records, removes duplicates, maps API fields to warehouse columns
-save_clean	Inserts validated rows (idempotent)
+🏢 **Project type:** Data Engineering (batch ETL and orchestration)
+🐍 **Stack:** Python · Apache Airflow · PostgreSQL · Docker
 
-3. Tech stack
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Airflow](https://img.shields.io/badge/Apache%20Airflow-2.9-017CEE?logo=apacheairflow&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![pytest](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
 
-Area	Tool
-Language	Python 3.12
-Orchestration	Apache Airflow 2.9.3 (LocalExecutor)
-Warehouse	PostgreSQL 16
-Containerisation	Docker, Docker Compose
-Testing	pytest
-Data source	CoinGecko public API (no API key required)
+---
 
-4. Key features
-Data ingestion
-Hourly pull of price, market cap, 24h volume and 24h price change for bitcoin, ethereum, solana, cardano, dogecoin, ripple, polkadot and litecoin
-30-second request timeout and HTTP error checking, so a bad response fails loudly and triggers a retry
-Orchestration (Airflow)
-4 tasks with explicit dependencies, defined with the TaskFlow API
-Automatic retries: 3 attempts, 2 minutes apart
-catchup=False to avoid backfilling every missed hour
-Full run history, logs and task status in the Airflow UI
-Transformations and validation
-Drops records with a missing coin id
-Drops records with a null, zero or negative price
-Removes duplicate coins within a batch
-Renames API fields to match the warehouse schema
-Logs every dropped record with a warning
-Warehouse design
-raw schema: full API payload plus fetch timestamp
-clean schema: typed columns with composite primary key (coin_id, fetched_at)
-Idempotent loads using ON CONFLICT DO NOTHING, so retries and re-runs never create duplicate rows
-Quality and observability
-Unit tests for the transformation logic
-Structured Python logging in every stage
-Airflow UI for monitoring failures and retries
-5. Data model
-raw.crypto_prices
+## 🚀 1. Project Overview
 
-Column	Type	Description
-id	SERIAL (PK)	Row id
-fetched_at	TIMESTAMPTZ	When the data was fetched
-payload	JSONB	Full, unmodified API response
+The Crypto ETL Pipeline is a hands-on data engineering project that collects cryptocurrency market data from the public CoinGecko API every hour, validates and cleans it, and loads it into a PostgreSQL data warehouse. The workflow is scheduled and monitored with Apache Airflow, and the entire environment runs in Docker.
 
-clean.crypto_prices
+The warehouse is split into a **raw layer**, which keeps the untouched API response, and a **clean layer**, which holds validated, analysis-ready rows. Loads are idempotent, so retries and re-runs never create duplicate data.
 
-Column	Type	Description
-coin_id	TEXT	Coin identifier, e.g. bitcoin
-price_usd	NUMERIC	Current price in USD
-market_cap_usd	NUMERIC	Market capitalisation
-volume_24h_usd	NUMERIC	24-hour trading volume
-price_change_24h_pct	NUMERIC	24-hour price change in percent
-fetched_at	TIMESTAMPTZ	Fetch timestamp
+This is an educational and portfolio project built and tested in a local Docker environment configured by the author, using a free public API. It is not a production system.
 
-Primary key: (coin_id, fetched_at)
-6. Project structure
-de-pipeline/
-├── dags/
-│   └── crypto_etl.py        Airflow DAG definition
-├── src/
-│   ├── extract.py           API ingestion
-│   ├── transform.py         cleaning and validation
-│   └── load.py              PostgreSQL loaders
-├── sql/
-│   └── init.sql             raw and clean schemas
-├── tests/
-│   └── test_transform.py    unit tests
-├── docker-compose.yml       full stack definition
-└── README.md
-7. Getting started
-Prerequisites: Docker Desktop (with the engine running).
+![Airflow DAG graph view](docs/screenshots/airflow-dag.png)
+
+## 🎯 2. Objectives
+
+- Ingest data from a public API on an hourly schedule.
+- Orchestrate tasks with Apache Airflow, including dependencies and automatic retries.
+- Clean and validate records in Python: reject invalid values and remove duplicates.
+- Store raw and transformed data in a PostgreSQL warehouse.
+- Package the whole stack with Docker so it runs the same on any machine.
+- Add logging and automated tests for the transformation logic.
+- Document the design, results, and limitations.
+
+## 🏗️ 3. Architecture
+
+Data flows from the API through an Airflow DAG with four tasks. The extracted data splits into two branches: one stores the raw response, the other validates it and loads the clean table.
+
+**Overview**
+
+![Pipeline overview](docs/diagrams/pipeline-overview.png)
+
+**Detailed data flow**
+
+![Pipeline data flow](docs/diagrams/pipeline-flow.png)
+
+```
+CoinGecko API ──► extract ──┬──► save_raw ───────────────► raw.crypto_prices
+                            └──► transform ──► save_clean ──► clean.crypto_prices
+```
+
+### 🧩 Main Components
+
+- **CoinGecko API:** Public market data source, no API key required.
+- **Apache Airflow:** Schedules the DAG hourly, manages task dependencies, and retries failures (3 times, 2 minutes apart).
+- **Python modules:** `extract.py`, `transform.py`, and `load.py` hold the pipeline logic, separate from the DAG.
+- **PostgreSQL (warehouse):** Stores the raw and clean schemas.
+- **PostgreSQL (Airflow metadata):** A separate database used only by Airflow.
+- **Docker Compose:** Starts the full stack with one command.
+- **pytest:** Unit tests for the transformation rules.
+
+### 🗄️ Warehouse Tables
+
+| Table | Purpose |
+|---|---|
+| `raw.crypto_prices` | Full, unmodified API response stored as JSONB with a fetch timestamp |
+| `clean.crypto_prices` | Validated rows: coin, price, market cap, 24h volume, 24h change, timestamp. Primary key: `(coin_id, fetched_at)` |
+
+## 🛠️ 4. Tools and Technologies
+
+- Python 3.12
+- Apache Airflow 2.9.3 (TaskFlow API, LocalExecutor)
+- PostgreSQL 16
+- Docker and Docker Compose
+- pytest
+- CoinGecko public API
+- SQL for querying the warehouse
+- Visual Studio Code and Git
+
+## 🔬 5. Scenarios and Methodology
+
+### ▶️ Scenario 1: End-to-End Pipeline Run
+
+The stack was started with Docker Compose and the `crypto_etl` DAG was triggered from the Airflow interface. All four tasks (`extract`, `save_raw`, `transform`, `save_clean`) completed successfully. The warehouse was then queried to confirm that rows for all eight coins had landed in the clean table.
+
+### 🧪 Scenario 2: Validation and Automated Testing
+
+The transformation logic was covered with five unit tests: valid records are kept and renamed, missing prices are dropped, zero or negative prices are dropped, missing ids are dropped, and duplicates are removed. All five tests passed.
+
+### 🔄 Pipeline Workflow
+
+1. Airflow triggers the DAG every hour.
+2. `extract` calls the CoinGecko API for 8 coins.
+3. `save_raw` stores the untouched response in `raw.crypto_prices`.
+4. `transform` validates records, removes duplicates, and maps fields to warehouse columns.
+5. `save_clean` inserts the validated rows into `clean.crypto_prices`, skipping any row that already exists.
+6. Every stage writes logs that are visible in the Airflow interface.
+
+## 📊 6. Key Findings and Results
+
+- 🟢 **End-to-end run:** All four DAG tasks succeeded and data was loaded into both warehouse layers.
+- 🔎 **Data check:** The DAG ran twice during testing (a manual trigger and a scheduled run), producing 16 rows in the clean table: 8 coins multiplied by 2 fetch timestamps. This confirmed that each run adds one row per coin and keeps runs separate.
+- 🧪 **Tests:** 5 of 5 unit tests passed.
+- 🛠️ **Debugging:** A syntax error in `load.py` caused an Airflow DAG import error. It was diagnosed from the traceback in the Airflow interface, fixed, and the scheduler was restarted so the corrected code loaded.
+
+The findings are limited to the tests that were run. Automatic retries are configured in the DAG, but a forced task failure was not part of this version of the testing.
+
+## 🔐 7. Recommendations and Future Improvements
+
+- **Alerting:** Send email or Slack notifications when a task fails.
+- **Data quality checks:** Add automated checks (for example with Great Expectations), including detection of implausible price jumps.
+- **Secrets management:** Replace the hardcoded local credentials with environment files or a secrets manager.
+- **Dashboard:** Build a visualisation layer on top of the clean table.
+- **Scaling:** Move from LocalExecutor to CeleryExecutor or Kubernetes for larger workloads.
+- **Next projects:** A streaming version with Kafka and a cloud warehouse version with dbt and BigQuery.
+
+These are recommendations, not features claimed as implemented in this version of the project.
+
+## ▶️ 8. How to Run
+
+**Requirement:** Docker Desktop with the engine running.
+
+```bash
 git clone https://github.com/binnyhinn/de-pipeline.git
 cd de-pipeline
 docker compose up -d
-Open http://localhost:8080 and log in (admin / admin)
-Un-pause the crypto_etl DAG using the toggle
-Trigger it manually with the play button, or wait for the next hourly run
-To stop everything: docker compose down (add -v to also delete the stored data).
-8. Querying the warehouse
-Latest prices:
-docker compose exec warehouse-db psql -U warehouse -d warehouse -c \
-"SELECT coin_id, price_usd, price_change_24h_pct, fetched_at
- FROM clean.crypto_prices
- ORDER BY fetched_at DESC, coin_id
- LIMIT 8;"
-Row counts per layer:
-docker compose exec warehouse-db psql -U warehouse -d warehouse -c \
-"SELECT 'raw' AS layer, count(*) FROM raw.crypto_prices
- UNION ALL
- SELECT 'clean', count(*) FROM clean.crypto_prices;"
-The warehouse is also reachable from your machine at localhost:5433 (user warehouse, database warehouse) with any SQL client.
-9. Testing
+```
+
+1. Open http://localhost:8080 and log in with `admin` / `admin`.
+2. Un-pause the `crypto_etl` DAG and trigger it.
+3. Query the clean table:
+
+```bash
+docker compose exec warehouse-db psql -U warehouse -d warehouse -c "SELECT * FROM clean.crypto_prices LIMIT 8;"
+```
+
+4. Run the tests:
+
+```bash
 docker compose exec airflow-scheduler python -m pytest /opt/airflow/tests -v
+```
 
-Test	What it verifies
-valid record is kept and renamed	field mapping is correct
-missing price is dropped	null prices are rejected
-zero or negative price is dropped	invalid values are rejected
-missing id is dropped	records without an identifier are rejected
-duplicates are removed	the same coin is not loaded twice in a batch
+To stop everything: `docker compose down` (add `-v` to delete the stored data).
 
-10. Design decisions
-Raw and clean layers: keeping the original payload means transformation logic can change later and history can be reprocessed without calling the API again.
-Idempotent loads: Airflow retries tasks on failure, so every write must be safe to repeat.
-Plain Python transforms: the dataset is small, so plain Python keeps the logic easy to unit test without extra dependencies.
-Separate databases: Airflow's metadata and the analytics warehouse live in different Postgres instances, so pipeline internals never mix with business data.
-11. Limitations
-Credentials are hardcoded for local development; a production setup would use a secrets manager
-The free CoinGecko tier is rate limited; the hourly schedule stays well within it
-Data passes between tasks through Airflow XCom, which suits small payloads but not large datasets
-Single-node LocalExecutor, not a distributed setup
-No alerting yet on task failure (failures are visible in the Airflow UI only)
-12. Future improvements
-Email or Slack alerts on task failure
-Data quality checks (for example with Great Expectations)
-A dashboard on top of the clean layer
-Moving to the CeleryExecutor or Kubernetes for scaling
-Extending to a streaming version with Kafka
-13. What this project demonstrates
-Data ingestion from a public API · workflow orchestration and retry handling · data validation and deduplication · warehouse layering · idempotent loading · containerised deployment · automated testing · logging and monitoring
+### 📁 Project Structure
 
+```
+de-pipeline/
+├── dags/          Airflow DAG
+├── src/           extract, transform, load
+├── sql/           warehouse schema
+├── queries/       sample SQL queries
+├── tests/         unit tests
+├── docs/          report, diagrams, screenshots
+└── docker-compose.yml
+```
+
+## 📚 9. Project Documentation
+
+📄 **[View Full Project Report (PDF)](docs/Crypto_ETL_Pipeline_Report.pdf)**
+The complete report covers the problem statement, objectives, architecture, database design, implementation, containerisation, testing, results, challenges and solutions, limitations, and future work.
+
+## ⚠️ 10. Disclaimer
+
+This project was developed for educational and portfolio purposes in a local Docker environment configured by the author. It uses a free public API and sample data only.
+
+It demonstrates a practical batch data pipeline and is not a production system. Credentials in this repository are default local development values and must never be reused in a real environment. The CoinGecko free tier is rate limited, so changes to the schedule or the number of coins should respect those limits.
+
+## 👨‍💻 11. Author Information
+
+👤 **Author:** R. Binny Hinn
+🎓 **Qualification:** Computer Science and Engineering (AI and ML), Ponjesly College of Engineering, Anna University (2026)
+💼 **Focus:** Python development and data engineering
+
+🔗 [GitHub](https://github.com/binnyhinn) · [LinkedIn](https://www.linkedin.com/in/binny-hinn-4303873ba)
